@@ -14,10 +14,10 @@ class Prefs(context: Context) {
         get() = sp.getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
         set(v) = sp.edit().putString("model", v).apply()
 
-    /** Subject the big button records into. */
+    /** Subject the big button records into; "Общий" means Codex sorts it later. */
     var currentSubject: String
-        get() = sp.getString("last_subject", "") ?: ""
-        set(v) = sp.edit().putString("last_subject", v).apply()
+        get() = (sp.getString("current_subject", null) ?: LessonStore.GENERAL).ifBlank { LessonStore.GENERAL }
+        set(v) = sp.edit().putString("current_subject", v).apply()
 
     var subjects: List<String>
         get() = try {

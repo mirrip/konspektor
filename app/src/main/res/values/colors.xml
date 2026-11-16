@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="launcher_bg">#FF2E5BBA</color>
+    <color name="launcher_bg">#FF6D5BFF</color>
+    <color name="bg">#FF0B0E13</color>
+    <color name="surface">#FF151A23</color>
+    <color name="text">#FFEEF1F6</color>
+    <color name="muted">#FF8A94A6</color>
+    <color name="accent">#FF8B7CFF</color>
 </resources>

@@ -1,76 +1,57 @@
 package app.konspektor
 
 import android.content.Intent
-import android.graphics.Paint
 import android.os.Bundle
+import android.text.TextUtils
 import android.view.Gravity
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
-import android.widget.CheckBox
-import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.TextView
 
-/** One subject: record button, homework list and the numbered lessons. */
+/** One subject: its homework and numbered lessons ("Урок 3 · тема"). */
 class SubjectActivity : BaseActivity() {
 
     private lateinit var subject: String
-    private lateinit var homeworkBox: LinearLayout
-    private lateinit var lessonsBox: LinearLayout
-    private lateinit var infoText: android.widget.TextView
-    private lateinit var recordButton: android.widget.Button
+    private lateinit var infoText: TextView
+    private lateinit var homeworkTitle: LinearLayout
+    private lateinit var homeworkCol: LinearLayout
+    private lateinit var lessonsTitle: LinearLayout
+    private lateinit var lessonsCol: LinearLayout
     private val listener: () -> Unit = { renderLessons() }
     private var signature = ""
+
+    private val isGeneral get() = subject == LessonStore.GENERAL
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         subject = intent.getStringExtra(EXTRA_SUBJECT) ?: run { finish(); return }
-        val col = page(subject, null, action = "🗑" to { deleteSubject() })
-
-        infoText = text("", 14f, Ui.MUTED).apply { setPadding(dp(2), dp(4), 0, 0) }
+        val col = page(
+            if (isGeneral) "Неразобранные" else subject,
+            "предмет",
+            action = if (isGeneral) null else "⋯" to { deleteSubject() }
+        )
+        infoText = text("", 14f, Ui.MUTED).apply { setPadding(dp(2), dp(10), 0, 0) }
         col.addView(infoText)
 
-        recordButton = primaryButton("●  Записать урок") { onRecord() }
-        col.addView(full(recordButton, 54, 14))
+        if (!isGeneral) {
+            homeworkTitle = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(homeworkTitle)
+            homeworkCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(full(homeworkCol))
+        }
 
-        section(col, "Домашка")
-        val addRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = rounded(android.graphics.Color.WHITE, 14, Ui.LINE)
-            setPadding(dp(12), dp(2), dp(6), dp(2))
-        }
-        val input = EditText(this).apply {
-            hint = "Новое задание: например, №12 и 15 к пятнице"
-            background = null
-            textSize = 15f
-            imeOptions = EditorInfo.IME_ACTION_DONE
-            setSingleLine()
-        }
-        fun add() {
-            val t = input.text.toString().trim()
-            if (t.isEmpty()) return
-            HomeworkStore.add(this, subject, t)
-            input.setText("")
-            renderHomework()
-        }
-        input.setOnEditorActionListener { _, _, _ -> add(); true }
-        addRow.addView(input, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        addRow.addView(pill("Добавить", Ui.CHIP_BG, Ui.PRIMARY) { add() })
-        col.addView(full(addRow, null, 8))
-        homeworkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(full(homeworkBox))
-
-        section(col, "Уроки")
-        lessonsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(full(lessonsBox))
-        col.addView(spacer(24))
+        lessonsTitle = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(lessonsTitle)
+        lessonsCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(full(lessonsCol))
+        col.addView(spacer(28))
     }
 
     override fun onResume() {
         super.onResume()
         AppState.addListener(listener)
         signature = ""
-        renderHomework()
+        if (!isGeneral) renderHomework()
         renderLessons()
     }
 
@@ -79,17 +60,13 @@ class SubjectActivity : BaseActivity() {
         super.onPause()
     }
 
-    private fun onRecord() {
-        if (AppState.recording) RecorderService.stop(this) else requestStart(subject)
-    }
-
     private fun deleteSubject() {
-        val recordingThis = AppState.recording && AppState.lessonDir?.let { LessonStore.subject(it) } == subject
-        if (recordingThis) { toast("Сначала остановите запись"); return }
+        val recordingThis = AppState.serviceRunning && AppState.lessonDir?.let { LessonStore.info(it).subject } == subject
+        if (recordingThis) { toast("Сначала дождитесь конца записи"); return }
         val n = LessonStore.lessons(this).count { it.subject == subject }
         confirm(
             "Удалить «$subject»?",
-            "Удалятся предмет, ${Ui.plural(n, "урок", "урока", "уроков")} (аудио и тексты) и домашка по нему. Вернуть будет нельзя.",
+            "Удалятся предмет, ${Ui.plural(n, "урок", "урока", "уроков")} (аудио, тексты, конспекты) и домашка по нему. Вернуть будет нельзя.",
             "Удалить"
         ) {
             Subjects.delete(this, subject)
@@ -98,88 +75,82 @@ class SubjectActivity : BaseActivity() {
     }
 
     private fun renderHomework() {
-        homeworkBox.removeAllViews()
-        val items = HomeworkStore.forSubject(this, subject).sortedWith(compareBy({ it.done }, { it.createdMs }))
+        val items = HomeworkStore.forSubject(this, subject).sortedWith(compareBy({ it.done }, { -it.createdMs }))
+        val open = items.count { !it.done }
+        homeworkTitle.removeAllViews()
+        section(homeworkTitle, "Домашка", if (open > 0) "$open" else null, "+ Задание" to {
+            askText("Задание по предмету «$subject»", "Например: №12 и 15 к пятнице", "Добавить") {
+                HomeworkStore.add(this, subject, it)
+                renderHomework()
+            }
+        })
+        homeworkCol.removeAllViews()
         if (items.isEmpty()) {
-            homeworkBox.addView(text("Пока пусто. Задание можно удалить долгим нажатием.", 13f, Ui.MUTED).apply {
-                setPadding(dp(4), dp(8), 0, 0)
-            })
+            homeworkCol.addView(full(emptyNote("Заданий нет. Долгое нажатие на задание удаляет его."), null, 8))
             return
         }
         val c = card()
         items.forEachIndexed { i, hw ->
-            val box = CheckBox(this).apply {
-                text = hw.text
-                textSize = 15f
-                isChecked = hw.done
-                setTextColor(if (hw.done) Ui.MUTED else Ui.TEXT)
-                if (hw.done) paintFlags = paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
-                buttonTintList = android.content.res.ColorStateList.valueOf(Ui.subjectColor(subject))
-                setPadding(dp(4), if (i == 0) 0 else dp(4), 0, dp(4))
-                setOnCheckedChangeListener { _, checked ->
-                    HomeworkStore.setDone(this@SubjectActivity, hw.id, checked)
-                    renderHomework()
-                }
-                setOnLongClickListener {
-                    confirm("Удалить задание?", hw.text, "Удалить") {
-                        HomeworkStore.delete(this@SubjectActivity, hw.id)
-                        renderHomework()
-                    }
-                    true
-                }
-            }
-            c.addView(box)
+            if (i > 0) c.addView(divider())
+            c.addView(homeworkRow(hw, showSubject = false) { renderHomework() })
         }
-        homeworkBox.addCard(c, 8)
+        homeworkCol.addCard(c, 8)
     }
 
     private fun renderLessons() {
-        val recordingThis = AppState.recording && AppState.lessonDir?.let { LessonStore.subject(it) } == subject
-        recordButton.text = if (recordingThis) "■  Остановить запись" else "●  Записать урок"
-        recordButton.background = rounded(if (recordingThis) Ui.RED else Ui.PRIMARY, 14)
-        recordButton.isEnabled = recordingThis || !AppState.recording
-
         val sig = "${AppState.recording}|${AppState.done}|${AppState.failed}|${AppState.queued}|${AppState.serviceRunning}"
         if (sig == signature) return
         signature = sig
 
         val lessons = LessonStore.lessons(this).filter { it.subject == subject }
         val total = lessons.sumOf { it.durationSec }
-        infoText.text = if (lessons.isEmpty()) "Уроков пока нет" else
-            Ui.plural(lessons.size, "урок", "урока", "уроков") + " · всего записано " + Ui.duration(total)
+        val konspekts = lessons.count { it.hasKonspekt }
+        infoText.text = when {
+            lessons.isEmpty() -> "Уроков пока нет."
+            isGeneral -> "Эти уроки записаны без предмета. Codex прочитает их, разложит по предметам и даст темы."
+            else -> Ui.plural(lessons.size, "урок", "урока", "уроков") + " · " + Ui.duration(total) + " записи · " +
+                Ui.plural(konspekts, "конспект", "конспекта", "конспектов")
+        }
 
-        lessonsBox.removeAllViews()
+        lessonsTitle.removeAllViews()
+        section(lessonsTitle, "Уроки", if (lessons.isEmpty()) null else "${lessons.size}")
+        lessonsCol.removeAllViews()
         if (lessons.isEmpty()) {
-            lessonsBox.addView(text("Нажми «Записать урок» — он появится здесь под номером 1.", 13f, Ui.MUTED).apply {
-                setPadding(dp(4), dp(8), 0, 0)
-            })
+            lessonsCol.addView(full(emptyNote("Здесь появятся уроки с номерами и темами."), null, 8))
             return
         }
-        for (l in lessons.asReversed()) {
-            val c = card().apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setOnClickListener {
-                    startActivity(Intent(this@SubjectActivity, LessonActivity::class.java).putExtra(LessonActivity.EXTRA_DIR, l.dir.path))
-                }
-            }
-            val num = text("${l.number}", 18f, Ui.subjectColor(subject), bold = true).apply {
-                gravity = Gravity.CENTER
-                background = rounded(Ui.CHIP_BG, 12)
-                layoutParams = LinearLayout.LayoutParams(dp(42), dp(42))
-            }
-            c.addView(num)
-            val mid = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(14), 0, dp(8), 0)
-            }
-            mid.addView(text("Урок ${l.number}", 16f, Ui.TEXT, bold = true))
-            mid.addView(text(Ui.dateTime(l.startedMs) + " · " + Ui.duration(l.durationSec), 13f, Ui.MUTED))
-            c.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            val live = AppState.recording && AppState.lessonDir == l.dir
-            val (label, bg, fg) = statusOf(l, live)
-            c.addView(pill(label, bg, fg) {}.apply { setOnClickListener(null); isClickable = false; textSize = 12f })
-            lessonsBox.addCard(c, 8)
+        for (l in lessons.asReversed()) lessonsCol.addCard(lessonCard(l), 8)
+    }
+
+    private fun lessonCard(l: LessonInfo) = card(clickable = true).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        val color = Ui.subjectColor(subject)
+        addView(text("${l.number}", 18f, color, Ui.BOLD).apply {
+            gravity = Gravity.CENTER
+            background = rounded(Ui.alpha(color, 0.14f), 14)
+            layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
+        })
+        val mid = LinearLayout(this@SubjectActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), 0, dp(8), 0)
+        }
+        mid.addView(text(l.topic ?: "Урок ${l.number}", 16f, Ui.TEXT, Ui.MEDIUM).apply {
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+        })
+        val sub = (if (l.topic != null) "Урок ${l.number} · " else "") + Ui.dateTime(l.startedMs) + " · " + Ui.duration(l.durationSec)
+        mid.addView(text(sub, 12.5f, Ui.MUTED).apply { setPadding(0, dp(4), 0, 0) })
+        val live = AppState.recording && AppState.lessonDir == l.dir
+        val (lbl, bg, fg) = statusOf(l, live)
+        mid.addView(LinearLayout(this@SubjectActivity).apply {
+            setPadding(0, dp(8), 0, 0)
+            addView(chip(lbl, bg, fg).apply { textSize = 11.5f; setPadding(dp(10), dp(4), dp(10), dp(4)) })
+        })
+        addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(text("›", 24f, Ui.MUTED))
+        setOnClickListener {
+            startActivity(Intent(this@SubjectActivity, LessonActivity::class.java).putExtra(LessonActivity.EXTRA_DIR, l.dir.path))
         }
     }
 
@@ -187,11 +158,11 @@ class SubjectActivity : BaseActivity() {
         const val EXTRA_SUBJECT = "subject"
 
         fun statusOf(l: LessonInfo, live: Boolean): Triple<String, Int, Int> = when {
-            live -> Triple("● запись", Ui.RED_BG, Ui.RED)
-            l.pending > 0 -> Triple("расшифровка…", Ui.CHIP_BG, Ui.PRIMARY)
-            l.failed > 0 -> Triple("ошибок: ${l.failed}", Ui.RED_BG, Ui.RED)
-            l.hasKonspekt -> Triple("конспект ✓", Ui.GREEN_BG, Ui.GREEN)
-            else -> Triple("текст готов", Ui.AMBER_BG, Ui.AMBER)
+            live -> Triple("● идёт запись", Ui.RED_SOFT, Ui.RED)
+            l.pending > 0 -> Triple("расшифровка…", Ui.ACCENT_SOFT, Ui.ACCENT)
+            l.failed > 0 -> Triple("ошибок: ${l.failed}", Ui.RED_SOFT, Ui.RED)
+            l.hasKonspekt -> Triple("конспект готов", Ui.GREEN_SOFT, Ui.GREEN)
+            else -> Triple("текст готов · ждёт Codex", Ui.AMBER_SOFT, Ui.AMBER)
         }
     }
 }

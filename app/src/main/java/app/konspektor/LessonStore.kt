@@ -2,6 +2,7 @@ package app.konspektor
 
 import android.content.Context
 import android.os.Environment
+import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -10,7 +11,12 @@ import java.util.Locale
 /** What the screens need to know about one recorded lesson. */
 data class LessonInfo(
     val dir: File,
+    /** Subject from Codex (info.json) if it has sorted the lesson, otherwise the one chosen when recording. */
     val subject: String,
+    /** What the lesson was about, written by Codex. */
+    val topic: String?,
+    /** Codex has looked at this lesson (info.json exists). */
+    val sorted: Boolean,
     val number: Int,
     val startedMs: Long,
     val durationSec: Long,
@@ -32,11 +38,14 @@ data class LessonInfo(
  *   transcript.txt       merged text, rebuilt after every piece
  *   done.txt             everything is transcribed: the PC side can pick the lesson up
  *   konspekt.md          notes written later (by Codex on the PC); shown in the app if present
+ *   info.json            written by Codex: {"subject": "Физика", "topic": "Законы Ньютона"}
  */
 object LessonStore {
     const val CHUNK_SEC = 300
     const val OVERLAP_SEC = 3
-    const val NO_SUBJECT = "Без предмета"
+    /** Recorded without choosing a subject; Codex decides later. */
+    const val GENERAL = "Общий"
+    const val NO_SUBJECT = GENERAL
 
     @Volatile private var cachedRoot: File? = null
 
@@ -63,36 +72,38 @@ object LessonStore {
     // ---------------------------------------------------------------- lessons
 
     fun newLesson(context: Context, subject: String): File {
-        val subj = subject.trim().ifEmpty { NO_SUBJECT }
-        val number = (lessons(context).filter { it.subject == subj }.maxOfOrNull { it.number } ?: 0) + 1
+        val subj = subject.trim().ifEmpty { GENERAL }
         val now = Date()
         val stamp = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.US).format(now)
         val clean = subj.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").take(40).trim('_')
-        val name = "${stamp}_${clean}_урок-$number"
+        val name = "${stamp}_${clean}"
         var dir = File(root(context), name)
         var i = 2
         while (dir.exists()) dir = File(root(context), "${name}_${i++}")
         File(dir, "audio").mkdirs()
         File(dir, "parts").mkdirs()
         val started = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(now)
-        File(dir, "meta.txt").writeText(
-            "subject=$subj\nnumber=$number\nstarted=$started\nstarted_ms=${now.time}\n"
-        )
+        File(dir, "meta.txt").writeText("subject=$subj\nstarted=$started\nstarted_ms=${now.time}\n")
         return dir
     }
 
     fun lessonDirs(context: Context): List<File> =
         root(context).listFiles { f -> f.isDirectory && File(f, "meta.txt").exists() }?.sortedBy { it.name } ?: emptyList()
 
-    /** All lessons, oldest first. Lessons from version 0.1 get numbers by date. */
+    /** All lessons, oldest first, numbered 1, 2, 3… inside their (final) subject. */
     fun lessons(context: Context): List<LessonInfo> {
-        val raw = lessonDirs(context).map { info(it) }
         val counters = HashMap<String, Int>()
-        return raw.map { l ->
-            val n = if (l.number > 0) l.number else (counters[l.subject] ?: 0) + 1
-            counters[l.subject] = maxOf(counters[l.subject] ?: 0, n)
+        return lessonDirs(context).map { info(it) }.sortedBy { it.startedMs }.map { l ->
+            val n = (counters[l.subject] ?: 0) + 1
+            counters[l.subject] = n
             l.copy(number = n)
         }
+    }
+
+    fun number(context: Context, dir: File): Int = lessons(context).firstOrNull { it.dir == dir }?.number ?: 0
+
+    private fun codexInfo(dir: File): JSONObject? = File(dir, "info.json").takeIf { it.exists() }?.let {
+        try { JSONObject(it.readText()) } catch (_: Exception) { null }
     }
 
     fun info(dir: File): LessonInfo {
@@ -108,10 +119,15 @@ object LessonStore {
             all.isNotEmpty() -> (all.size - 1L) * (CHUNK_SEC - OVERLAP_SEC) + CHUNK_SEC / 2
             else -> 0L
         }
+        val codex = codexInfo(dir)
+        val codexSubject = codex?.optString("subject")?.trim().orEmpty()
+        val topic = codex?.optString("topic")?.trim()?.takeIf { it.isNotEmpty() }
         return LessonInfo(
             dir = dir,
-            subject = meta["subject"].orEmpty().ifEmpty { NO_SUBJECT },
-            number = meta["number"]?.toIntOrNull() ?: 0,
+            subject = codexSubject.ifEmpty { meta["subject"].orEmpty().ifEmpty { GENERAL } },
+            topic = topic,
+            sorted = codex != null,
+            number = 0,
             startedMs = started,
             durationSec = duration,
             chunks = all.size,
@@ -127,7 +143,8 @@ object LessonStore {
             ?.mapNotNull { line -> line.indexOf('=').takeIf { it > 0 }?.let { line.substring(0, it) to line.substring(it + 1) } }
             ?.toMap() ?: emptyMap()
 
-    fun subject(lesson: File): String = readMeta(lesson)["subject"].orEmpty().ifEmpty { NO_SUBJECT }
+    /** Subject chosen when recording (before Codex sorts the lesson). */
+    fun subject(lesson: File): String = readMeta(lesson)["subject"].orEmpty().ifEmpty { GENERAL }
 
     fun deleteLesson(dir: File) = dir.deleteRecursively()
 
@@ -170,9 +187,7 @@ object LessonStore {
         val all = chunks(lesson)
         val meta = readMeta(lesson)
         val sb = StringBuilder()
-        sb.append("# ").append(subject(lesson))
-        meta["number"]?.let { sb.append(", урок ").append(it) }
-        sb.append('\n')
+        sb.append("# ").append(subject(lesson)).append('\n')
         sb.append("# Начало: ").append(meta["started"].orEmpty()).append('\n')
         sb.append("# Частей: ").append(all.size)
             .append(", не расшифровано: ").append(all.count { failedFile(it).exists() }).append("\n\n")

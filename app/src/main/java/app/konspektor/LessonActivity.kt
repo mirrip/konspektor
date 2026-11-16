@@ -2,22 +2,24 @@ package app.konspektor
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.Gravity
 import android.view.View
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import java.io.File
 
-/** One lesson: notes (konspekt.md, when Codex has written it) and the full transcript. */
+/** One lesson: switch between the notes (konspekt.md from Codex) and the full transcript. */
 class LessonActivity : BaseActivity() {
 
     private lateinit var dir: File
     private lateinit var metaText: TextView
-    private lateinit var statusPill: TextView
-    private lateinit var retryButton: Button
-    private lateinit var konspektText: TextView
-    private lateinit var transcriptText: TextView
-    private val listener: () -> Unit = { render() }
+    private lateinit var statusChip: TextView
+    private lateinit var retryButton: TextView
+    private lateinit var tabKonspekt: TextView
+    private lateinit var tabText: TextView
+    private lateinit var bodyText: TextView
+    private var showKonspekt = true
+    private val listener: () -> Unit = { render(force = false) }
     private var signature = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -25,40 +27,50 @@ class LessonActivity : BaseActivity() {
         dir = File(intent.getStringExtra(EXTRA_DIR) ?: run { finish(); return })
         if (!dir.exists()) { finish(); return }
         val info = LessonStore.info(dir)
-        val number = LessonStore.lessons(this).firstOrNull { it.dir == dir }?.number ?: info.number
-        val col = page("Урок $number", info.subject, action = "↗" to { share() })
+        val number = LessonStore.number(this, dir)
+        val subjectLabel = if (info.subject == LessonStore.GENERAL) "неразобранный урок" else "${info.subject} · урок $number"
+        val col = page(info.topic ?: "Урок $number", subjectLabel, action = "↗" to { share() })
+        showKonspekt = info.hasKonspekt
 
-        val top = LinearLayout(this).apply {
+        metaText = text("", 13.5f, Ui.MUTED).apply { setPadding(dp(2), dp(10), 0, 0) }
+        col.addView(metaText)
+        statusChip = chip("", Ui.ACCENT_SOFT, Ui.ACCENT)
+        col.addView(LinearLayout(this).apply { setPadding(0, dp(10), 0, 0); addView(statusChip) })
+
+        retryButton = outlineButton("Повторить нерасшифрованные части", Ui.AMBER) { requestRetry() }
+        col.addView(full(retryButton, 48, 14))
+
+        // segmented switch
+        val seg = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-            setPadding(dp(2), dp(8), 0, 0)
+            background = rounded(Ui.SURFACE, 16, Ui.LINE)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
         }
-        metaText = text("", 14f, Ui.MUTED)
-        top.addView(metaText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        statusPill = pill("", Ui.CHIP_BG, Ui.PRIMARY) {}.apply { setOnClickListener(null); isClickable = false; textSize = 12f }
-        top.addView(statusPill)
-        col.addView(top)
+        tabKonspekt = segment("Конспект") { showKonspekt = true; render(force = true) }
+        tabText = segment("Расшифровка") { showKonspekt = false; render(force = true) }
+        seg.addView(tabKonspekt, LinearLayout.LayoutParams(0, dp(40), 1f))
+        seg.addView(tabText, LinearLayout.LayoutParams(0, dp(40), 1f))
+        col.addView(full(seg, null, 22))
 
-        retryButton = outlineButton("Повторить нерасшифрованные части") { requestRetry() }
-        col.addView(full(retryButton, 48, 12))
-
-        section(col, "Конспект")
-        konspektText = text("", 15f, Ui.TEXT).apply { setTextIsSelectable(true) }
-        col.addCard(card().apply { addView(konspektText) }, 8)
-
-        section(col, "Расшифровка")
-        transcriptText = text("", 15f, Ui.TEXT).apply { setTextIsSelectable(true) }
-        col.addCard(card().apply { addView(transcriptText) }, 8)
+        bodyText = text("", 15.5f, Ui.TEXT).apply {
+            setTextIsSelectable(true)
+            setLineSpacing(0f, 1.3f)
+        }
+        col.addCard(card().apply { setPadding(dp(18), dp(18), dp(18), dp(18)); addView(bodyText) }, 12)
 
         col.addView(full(outlineButton("Удалить урок", Ui.RED) { deleteLesson() }, 48, 28))
-        col.addView(spacer(24))
+        col.addView(spacer(28))
+    }
+
+    private fun segment(lbl: String, onClick: () -> Unit) = text(lbl, 14f, Ui.MUTED, Ui.MEDIUM).apply {
+        gravity = Gravity.CENTER
+        setOnClickListener { onClick() }
     }
 
     override fun onResume() {
         super.onResume()
         AppState.addListener(listener)
-        signature = ""
-        render()
+        render(force = true)
     }
 
     override fun onPause() {
@@ -66,39 +78,47 @@ class LessonActivity : BaseActivity() {
         super.onPause()
     }
 
-    private fun render() {
-        val live = AppState.lessonDir == dir && (AppState.recording || AppState.serviceRunning)
-        val sig = "$live|${AppState.done}|${AppState.failed}|${AppState.queued}|${AppState.recording}"
-        if (sig == signature) return
+    private fun render(force: Boolean) {
+        val live = AppState.lessonDir == dir && AppState.serviceRunning
+        val sig = "$live|${AppState.done}|${AppState.failed}|${AppState.queued}|${AppState.recording}|$showKonspekt"
+        if (!force && sig == signature) return
         signature = sig
         if (!dir.exists()) { finish(); return }
 
         val info = LessonStore.info(dir)
-        metaText.text = Ui.dateTime(info.startedMs) + " · " + Ui.duration(info.durationSec) + " · " +
+        metaText.text = Ui.dateTime(info.startedMs) + "  ·  " + Ui.duration(info.durationSec) + "  ·  " +
             Ui.plural(info.chunks, "часть", "части", "частей")
-        val (label, bg, fg) = SubjectActivity.statusOf(info, AppState.recording && AppState.lessonDir == dir)
-        statusPill.text = label
-        statusPill.setTextColor(fg)
-        statusPill.background = rounded(bg, 20)
-        retryButton.visibility = if (info.failed > 0) View.VISIBLE else View.GONE
+        val (lbl, bg, fg) = SubjectActivity.statusOf(info, AppState.recording && AppState.lessonDir == dir)
+        statusChip.text = lbl
+        statusChip.setTextColor(fg)
+        statusChip.background = rounded(bg, 20)
+        retryButton.visibility = if (info.failed > 0 && !live) View.VISIBLE else View.GONE
 
-        konspektText.text = LessonStore.konspektText(dir)
-            ?: "Конспекта пока нет. Он появится здесь, когда его сделает Codex на компьютере " +
-                "(файл konspekt.md в папке урока)."
-        konspektText.setTextColor(if (info.hasKonspekt) Ui.TEXT else Ui.MUTED)
+        for ((tab, active) in listOf(tabKonspekt to showKonspekt, tabText to !showKonspekt)) {
+            tab.setTextColor(if (active) Ui.TEXT else Ui.MUTED)
+            tab.background = if (active) rounded(Ui.SURFACE2, 12) else null
+        }
 
-        val transcript = if (AppState.lessonDir == dir && AppState.transcript.isNotEmpty()) AppState.transcript
-        else LessonStore.transcriptText(dir)
-        val body = transcript.lines().filterNot { it.startsWith("# ") }.joinToString("\n").trim()
-        transcriptText.text = body.ifEmpty { "Текст появится примерно через 5 минут после начала записи." }
+        if (showKonspekt) {
+            val k = LessonStore.konspektText(dir)
+            bodyText.text = k ?: "Конспекта пока нет.\n\nCodex сделает его на компьютере после урока: разберёт текст, " +
+                "определит предмет и тему и положит сюда конспект."
+            bodyText.setTextColor(if (k != null) Ui.TEXT else Ui.MUTED)
+        } else {
+            val transcript = if (AppState.lessonDir == dir && AppState.transcript.isNotEmpty()) AppState.transcript
+            else LessonStore.transcriptText(dir)
+            val body = transcript.lines().filterNot { it.startsWith("# ") }.joinToString("\n").trim()
+            bodyText.text = body.ifEmpty { "Текст появится примерно через 5 минут после начала записи." }
+            bodyText.setTextColor(if (body.isEmpty()) Ui.MUTED else Ui.TEXT)
+        }
     }
 
     private fun share() {
         val k = LessonStore.konspektText(dir)
-        val text = k ?: LessonStore.transcriptText(dir)
+        val text = if (showKonspekt && k != null) k else LessonStore.transcriptText(dir)
         if (text.isBlank()) { toast("Текста пока нет"); return }
         val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-        startActivity(Intent.createChooser(send, if (k != null) "Отправить конспект" else "Отправить расшифровку"))
+        startActivity(Intent.createChooser(send, "Отправить"))
     }
 
     private fun deleteLesson() {

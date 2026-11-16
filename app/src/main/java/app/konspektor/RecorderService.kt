@@ -38,7 +38,7 @@ class RecorderService : Service() {
         private const val ACTION_STOP = "app.konspektor.STOP"
         private const val ACTION_RETRY = "app.konspektor.RETRY"
         private const val EXTRA_SUBJECT = "subject"
-        private const val CHANNEL = "recording"
+        private const val CHANNEL = "recording_quiet"
         private const val NOTIF_ID = 1
 
         fun start(ctx: Context, subject: String) = ctx.startForegroundService(
@@ -76,8 +76,13 @@ class RecorderService : Service() {
         super.onCreate()
         prefs = Prefs(this)
         val nm = getSystemService(NotificationManager::class.java)
+        nm.deleteNotificationChannel("recording")   // louder channel from version 0.1–0.2
+        // Minimal importance: no sound, no status-bar icon. Recording does not depend on notifications
+        // being allowed — without the permission Android simply hides this notice.
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Запись урока", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL, "Запись урока", NotificationManager.IMPORTANCE_MIN).apply {
+                setShowBadge(false)
+            }
         )
     }
 
@@ -144,6 +149,7 @@ class RecorderService : Service() {
             .setSmallIcon(R.drawable.ic_mic)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setVisibility(Notification.VISIBILITY_SECRET)
             .setContentIntent(open)
             .setContentTitle(
                 if (AppState.recording) "Идёт запись: ${AppState.lessonDir?.let { LessonStore.subject(it) } ?: "урок"}"
