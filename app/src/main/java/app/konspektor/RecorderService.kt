@@ -145,7 +145,10 @@ class RecorderService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(open)
-            .setContentTitle(if (AppState.recording) "Идёт запись урока" else "Дорасшифровываю урок")
+            .setContentTitle(
+                if (AppState.recording) "Идёт запись: ${AppState.lessonDir?.let { LessonStore.subject(it) } ?: "урок"}"
+                else "Дорасшифровываю урок"
+            )
             .setContentText("Расшифровано: ${AppState.done} · в очереди: ${AppState.queued}" +
                 (if (AppState.failed > 0) " · ошибок: ${AppState.failed}" else ""))
         if (AppState.recording) {
@@ -277,7 +280,7 @@ class RecorderService : Service() {
 
     /** Pieces left untranscribed by an earlier run (app killed, phone off, no network). */
     private fun enqueueLeftovers() {
-        for (lesson in LessonStore.lessons(this)) {
+        for (lesson in LessonStore.lessonDirs(this)) {
             if (lesson == AppState.lessonDir && AppState.recording) continue
             if (!LessonStore.isStopped(lesson)) LessonStore.markStopped(lesson)
             LessonStore.chunks(lesson).filter { LessonStore.isPending(it) }.forEach { enqueue(it) }
@@ -285,7 +288,7 @@ class RecorderService : Service() {
     }
 
     private fun requeueFailed() {
-        for (lesson in LessonStore.lessons(this)) {
+        for (lesson in LessonStore.lessonDirs(this)) {
             var any = false
             for (chunk in LessonStore.chunks(lesson)) {
                 val f = LessonStore.failedFile(chunk)

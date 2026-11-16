@@ -31,6 +31,10 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".SubjectActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".LessonActivity" android:exported="false" />
+        <activity android:name=".SettingsActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+
         <service
             android:name=".RecorderService"
             android:exported="false"

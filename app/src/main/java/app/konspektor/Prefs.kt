@@ -1,6 +1,7 @@
 package app.konspektor
 
 import android.content.Context
+import org.json.JSONArray
 
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -13,9 +14,19 @@ class Prefs(context: Context) {
         get() = sp.getString("model", DEFAULT_MODEL) ?: DEFAULT_MODEL
         set(v) = sp.edit().putString("model", v).apply()
 
-    var lastSubject: String
+    /** Subject the big button records into. */
+    var currentSubject: String
         get() = sp.getString("last_subject", "") ?: ""
         set(v) = sp.edit().putString("last_subject", v).apply()
+
+    var subjects: List<String>
+        get() = try {
+            val arr = JSONArray(sp.getString("subjects", "[]"))
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (_: Exception) {
+            emptyList()
+        }
+        set(v) = sp.edit().putString("subjects", JSONArray(v).toString()).apply()
 
     companion object {
         const val DEFAULT_MODEL = "whisper-large-v3-turbo"

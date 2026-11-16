@@ -1,61 +1,83 @@
 package app.konspektor
 
-import android.Manifest
-import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.net.Uri
-import android.os.Build
+import android.graphics.Paint
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
-import android.provider.Settings
-import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowInsets
-import android.view.WindowInsetsController
-import android.widget.Button
-import android.widget.EditText
+import android.widget.CheckBox
 import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.TextView
-import android.widget.Toast
-import java.io.File
 
-class MainActivity : Activity() {
+/** Home: big round button on top, then open homework and the list of subjects. */
+class MainActivity : BaseActivity() {
 
-    private lateinit var prefs: Prefs
-    private lateinit var subjectEdit: EditText
-    private lateinit var startButton: Button
+    private lateinit var button: RecordButton
+    private lateinit var subjectChip: TextView
     private lateinit var statusText: TextView
-    private lateinit var levelBar: ProgressBar
-    private lateinit var transcriptText: TextView
-    private lateinit var keyStatus: TextView
-    private lateinit var keyEdit: EditText
-    private lateinit var folderText: TextView
-    private lateinit var batteryButton: Button
+    private lateinit var liveCard: LinearLayout
+    private lateinit var liveText: TextView
+    private lateinit var homeworkBox: LinearLayout
+    private lateinit var subjectsBox: LinearLayout
 
     private val handler = Handler(Looper.getMainLooper())
-    private val listener: () -> Unit = { render() }
+    private var listSignature = ""
+    private val listener: () -> Unit = { renderLive() }
     private val ticker = object : Runnable {
         override fun run() {
-            render()
+            renderLive()
             handler.postDelayed(this, 1000)
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        prefs = Prefs(this)
-        setContentView(buildUi())
         takeKeyFromIntent(intent)
+        val col = page("Конспектор", Ui.today(), back = false, action = "⚙" to {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        })
+
+        button = RecordButton(this).apply { setOnClickListener { onButton() } }
+        val buttonWrap = LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(12), 0, 0)
+            addView(button, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        col.addView(buttonWrap)
+
+        subjectChip = pill("", Ui.CHIP_BG, Ui.PRIMARY) { chooseSubject(startAfter = false) }.apply { textSize = 16f }
+        col.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER
+            addView(subjectChip)
+        })
+
+        statusText = text("", 14f, Ui.MUTED).apply {
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(10), dp(8), 0)
+        }
+        col.addView(full(statusText))
+
+        liveCard = card().apply {
+            addView(text("Сейчас в тексте", 13f, Ui.MUTED, bold = true))
+            liveText = text("", 15f, Ui.TEXT).apply { setPadding(0, dp(6), 0, dp(6)) }
+            addView(liveText)
+            addView(text("Открыть урок  →", 14f, Ui.PRIMARY, bold = true))
+            setOnClickListener { AppState.lessonDir?.let { openLesson(it.path) } }
+        }
+        col.addCard(liveCard, 16)
+
+        section(col, "Домашка")
+        homeworkBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(full(homeworkBox))
+
+        section(col, "Предметы", "+ Добавить" to { addSubject(startAfter = false) })
+        subjectsBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(full(subjectsBox))
+        col.addView(spacer(24))
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -66,8 +88,8 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         AppState.addListener(listener)
-        if (!AppState.serviceRunning && AppState.transcript.isEmpty()) loadLastTranscript()
-        folderText.text = "Папка с уроками: " + LessonStore.root(this).path
+        listSignature = ""
+        renderLists()
         handler.post(ticker)
     }
 
@@ -82,292 +104,191 @@ class MainActivity : Activity() {
         val key = intent?.getStringExtra("groq_key")?.trim() ?: return
         if (key.startsWith("gsk_")) {
             prefs.groqKey = key
-            Toast.makeText(this, "Ключ Groq сохранён", Toast.LENGTH_SHORT).show()
-            render()
+            toast("Ключ Groq сохранён")
         }
     }
 
     // ---------------------------------------------------------------- actions
 
-    private fun onStartStop() {
+    private fun onButton() {
         if (AppState.recording) {
             RecorderService.stop(this)
             return
         }
-        if (prefs.groqKey.isBlank()) {
-            Toast.makeText(this, "Сначала вставьте ключ Groq внизу экрана", Toast.LENGTH_LONG).show()
-            keyEdit.requestFocus()
-            return
-        }
-        val missing = neededPermissions().filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (missing.isNotEmpty()) {
-            requestPermissions(missing.toTypedArray(), REQ_START)
-            return
-        }
-        startRecording()
-    }
-
-    private fun startRecording() {
-        val subject = subjectEdit.text.toString().trim()
-        prefs.lastSubject = subject
-        AppState.transcript = ""
-        RecorderService.start(this, subject)
-    }
-
-    private fun neededPermissions(): List<String> = buildList {
-        add(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-        if (Build.VERSION.SDK_INT <= 29) add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "Без доступа к микрофону запись невозможна", Toast.LENGTH_LONG).show()
-            return
-        }
-        when (requestCode) {
-            REQ_START -> startRecording()
-            REQ_RETRY -> RecorderService.retry(this)
+        val subjects = Subjects.list(this)
+        val current = prefs.currentSubject
+        when {
+            subjects.isEmpty() -> addSubject(startAfter = true)
+            current.isBlank() || current !in subjects -> chooseSubject(startAfter = true)
+            else -> requestStart(current)
         }
     }
 
-    private fun onRetry() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(neededPermissions().toTypedArray(), REQ_RETRY)
-            return
-        }
-        RecorderService.retry(this)
-        Toast.makeText(this, "Отправляю нерасшифрованные части заново", Toast.LENGTH_SHORT).show()
+    private fun chooseSubject(startAfter: Boolean) {
+        if (AppState.recording) return
+        val subjects = Subjects.list(this)
+        if (subjects.isEmpty()) { addSubject(startAfter); return }
+        val items = (subjects + "➕  Новый предмет").toTypedArray()
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+            .setTitle(if (startAfter) "Какой сейчас урок?" else "Предмет для записи")
+            .setItems(items) { _, which ->
+                if (which == subjects.size) addSubject(startAfter)
+                else {
+                    prefs.currentSubject = subjects[which]
+                    renderLive()
+                    if (startAfter) requestStart(subjects[which])
+                }
+            }
+            .show()
     }
 
-    private fun onShare() {
-        val text = AppState.transcript
-        if (text.isBlank()) {
-            Toast.makeText(this, "Текста пока нет", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-        startActivity(Intent.createChooser(send, "Отправить расшифровку"))
-    }
-
-    private fun onSaveKey() {
-        val key = keyEdit.text.toString().trim()
-        if (!key.startsWith("gsk_") || key.length < 20) {
-            Toast.makeText(this, "Ключ Groq должен начинаться с gsk_", Toast.LENGTH_LONG).show()
-            return
-        }
-        prefs.groqKey = key
-        keyEdit.setText("")
-        Toast.makeText(this, "Ключ сохранён", Toast.LENGTH_SHORT).show()
-        render()
-    }
-
-    private fun onBattery() {
-        val pm = getSystemService(PowerManager::class.java)
-        val intent = if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
-        } else {
-            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-        }
-        try { startActivity(intent) } catch (_: Exception) {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+    private fun addSubject(startAfter: Boolean) {
+        askText("Новый предмет", "Например: Физика", "Добавить") { name ->
+            val s = Subjects.add(this, name)
+            prefs.currentSubject = s
+            listSignature = ""
+            renderLists()
+            if (startAfter) requestStart(s)
         }
     }
 
-    private fun loadLastTranscript() {
-        val last = LessonStore.lessons(this).lastOrNull() ?: return
-        val f = File(last, "transcript.txt")
-        AppState.transcript = if (f.exists()) f.readText() else ""
-    }
+    private fun openLesson(path: String) =
+        startActivity(Intent(this, LessonActivity::class.java).putExtra(LessonActivity.EXTRA_DIR, path))
 
     // ---------------------------------------------------------------- rendering
 
-    private fun render() {
-        if (!::startButton.isInitialized) return
+    /** Cheap updates, called often (timer, mic level, status). */
+    private fun renderLive() {
         val rec = AppState.recording
-        startButton.text = if (rec) "■  Остановить запись" else "●  Начать запись"
-        (startButton.background as? GradientDrawable)?.setColor(if (rec) RED else BLUE)
-        subjectEdit.isEnabled = !rec
+        button.recording = rec
+        button.level = AppState.level
+        if (rec) button.timerText = Ui.timer((System.currentTimeMillis() - AppState.startedAtMs) / 1000)
+
+        val subject = if (rec) AppState.lessonDir?.let { LessonStore.subject(it) } ?: "" else prefs.currentSubject
+        subjectChip.text = when {
+            rec -> "●  $subject"
+            subject.isBlank() -> "Выбрать предмет  ▾"
+            else -> "$subject  ▾"
+        }
+        subjectChip.setTextColor(if (rec) Ui.RED else Ui.PRIMARY)
+        subjectChip.background = rounded(if (rec) Ui.RED_BG else Ui.CHIP_BG, 20)
 
         val lines = mutableListOf<String>()
-        if (rec) {
-            val sec = (System.currentTimeMillis() - AppState.startedAtMs) / 1000
-            lines += "Идёт запись: %d:%02d:%02d".format(sec / 3600, sec / 60 % 60, sec % 60)
-        } else if (AppState.serviceRunning) {
-            lines += "Запись остановлена, дорасшифровываю…"
+        when {
+            rec -> lines += "Идёт запись. Можно выключить экран."
+            AppState.serviceRunning -> lines += "Запись остановлена, дорасшифровываю…"
         }
-        if (rec || AppState.serviceRunning || AppState.done > 0) {
-            lines += "Расшифровано частей: ${AppState.done} · в очереди: ${AppState.queued}" +
+        if (rec || AppState.serviceRunning) {
+            lines += "Расшифровано частей: ${AppState.done}" +
+                (if (AppState.queued > 0) " · в очереди: ${AppState.queued}" else "") +
                 (if (AppState.failed > 0) " · ошибок: ${AppState.failed}" else "")
         }
         AppState.lastError?.let { lines += "⚠ $it" }
-        if (lines.isEmpty()) lines += "Готово к записи. Положите телефон микрофоном к преподавателю."
+        if (lines.isEmpty()) lines += "Положи телефон поближе к преподавателю"
         statusText.text = lines.joinToString("\n")
 
-        levelBar.visibility = if (rec) View.VISIBLE else View.GONE
-        levelBar.progress = (AppState.level * 100).toInt()
-
-        val t = AppState.transcript
-        if (transcriptText.text.toString() != t) {
-            transcriptText.text = t.ifEmpty { "Здесь появится текст урока — по частям, примерно раз в 5 минут." }
+        val showLive = (rec || AppState.serviceRunning) && AppState.lessonDir != null
+        liveCard.visibility = if (showLive) View.VISIBLE else View.GONE
+        if (showLive) {
+            val body = AppState.transcript.lines().filterNot { it.startsWith("#") }.joinToString(" ").trim()
+            liveText.text = if (body.isEmpty() || body.contains("[ждёт расшифровки]") && body.length < 40)
+                "Первый текст появится примерно через 5 минут после начала."
+            else "…" + body.takeLast(280)
         }
 
-        val key = prefs.groqKey
-        keyStatus.text = if (key.isBlank()) "Ключ Groq не задан" else "Ключ Groq сохранён (…${key.takeLast(4)})"
-
-        val pm = getSystemService(PowerManager::class.java)
-        val ignoring = pm.isIgnoringBatteryOptimizations(packageName)
-        batteryButton.text = if (ignoring) "Экономия батареи отключена ✓" else "Разрешить работу в фоне (батарея)"
+        // Rebuild lists only when something structural changed.
+        val sig = "${AppState.recording}|${AppState.serviceRunning}|${AppState.done}|${AppState.failed}|${AppState.lessonDir}"
+        if (sig != listSignature) renderLists()
     }
 
-    private fun buildUi(): View {
-        val pad = dp(16)
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
+    private fun renderLists() {
+        listSignature = "${AppState.recording}|${AppState.serviceRunning}|${AppState.done}|${AppState.failed}|${AppState.lessonDir}"
+        renderHomework()
+        renderSubjects()
+    }
+
+    private fun renderHomework() {
+        homeworkBox.removeAllViews()
+        val open = HomeworkStore.all(this).filter { !it.done }.sortedBy { it.createdMs }
+        if (open.isEmpty()) {
+            homeworkBox.addView(full(text("Заданий нет 🎉  Добавляй их на странице предмета.", 14f, Ui.MUTED).apply {
+                setPadding(dp(4), dp(8), 0, 0)
+            }))
+            return
         }
-
-        col.addView(TextView(this).apply {
-            text = "Конспектор"
-            textSize = 26f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#1F2A44"))
-        })
-        col.addView(TextView(this).apply {
-            text = "Записывает урок, расшифровывает через Groq и складывает текст в папку для конспекта."
-            textSize = 14f
-            setTextColor(Color.parseColor("#5A6478"))
-            setPadding(0, dp(4), 0, dp(12))
-        })
-
-        subjectEdit = EditText(this).apply {
-            hint = "Предмет или тема (например: Матан, лекция 5)"
-            setText(prefs.lastSubject)
-            setSingleLine()
-        }
-        col.addView(subjectEdit, matchWrap())
-
-        startButton = Button(this).apply {
-            textSize = 18f
-            setTextColor(Color.WHITE)
-            isAllCaps = false
-            background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(BLUE) }
-            setOnClickListener { onStartStop() }
-        }
-        col.addView(startButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(64)).apply {
-            topMargin = dp(12)
-        })
-
-        levelBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
-        col.addView(levelBar, matchWrap().apply { topMargin = dp(8) })
-
-        statusText = TextView(this).apply {
-            textSize = 14f
-            setTextColor(Color.parseColor("#1F2A44"))
-            setPadding(0, dp(8), 0, dp(8))
-        }
-        col.addView(statusText, matchWrap())
-
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(smallButton("Поделиться текстом") { onShare() }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        row.addView(smallButton("Повторить ошибки") { onRetry() }, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-            leftMargin = dp(8)
-        })
-        col.addView(row, matchWrap())
-
-        col.addView(sectionTitle("Текст урока"))
-        transcriptText = TextView(this).apply {
-            textSize = 15f
-            setTextIsSelectable(true)
-            setTextColor(Color.parseColor("#222222"))
-            setLineSpacing(0f, 1.15f)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(10).toFloat(); setColor(Color.parseColor("#F3F5F9"))
+        val c = card()
+        open.take(8).forEachIndexed { i, hw ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, if (i == 0) 0 else dp(6), 0, 0)
             }
-        }
-        col.addView(transcriptText, matchWrap())
-
-        col.addView(sectionTitle("Настройки"))
-        keyStatus = TextView(this).apply { textSize = 14f }
-        col.addView(keyStatus)
-        keyEdit = EditText(this).apply {
-            hint = "Вставьте ключ Groq (gsk_…)"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setSingleLine()
-        }
-        col.addView(keyEdit, matchWrap())
-        col.addView(smallButton("Сохранить ключ") { onSaveKey() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
-        batteryButton = smallButton("") { onBattery() }
-        col.addView(batteryButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply {
-            topMargin = dp(8)
-        })
-        folderText = TextView(this).apply {
-            textSize = 12f
-            setTextColor(Color.parseColor("#5A6478"))
-            setPadding(0, dp(12), 0, 0)
-        }
-        col.addView(folderText)
-
-        val scroll = ScrollView(this).apply {
-            setBackgroundColor(Color.WHITE)
-            addView(col)
-            isFillViewport = true
-        }
-        applyInsets(scroll, col, pad)
-        render()
-        return scroll
-    }
-
-    /** Android 15+ draws apps edge-to-edge; keep content clear of the status/navigation bars and keyboard. */
-    private fun applyInsets(root: View, content: View, pad: Int) {
-        if (Build.VERSION.SDK_INT >= 30) {
-            window.decorView.post {
-                window.insetsController?.setSystemBarsAppearance(
-                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
-                )
+            val box = CheckBox(this).apply {
+                buttonTintList = android.content.res.ColorStateList.valueOf(Ui.subjectColor(hw.subject))
             }
-        }
-        root.setOnApplyWindowInsetsListener { _, insets ->
-            if (Build.VERSION.SDK_INT >= 30) {
-                val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
-                content.setPadding(pad + i.left, pad + i.top, pad + i.right, pad + i.bottom)
-            } else {
-                @Suppress("DEPRECATION")
-                content.setPadding(
-                    pad + insets.systemWindowInsetLeft, pad + insets.systemWindowInsetTop,
-                    pad + insets.systemWindowInsetRight, pad + insets.systemWindowInsetBottom
-                )
+            val label = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val main = text(hw.text, 15f, Ui.TEXT)
+            label.addView(main)
+            label.addView(text(hw.subject, 12f, Ui.subjectColor(hw.subject), bold = true))
+            box.setOnCheckedChangeListener { _, checked ->
+                HomeworkStore.setDone(this, hw.id, checked)
+                main.paintFlags = if (checked) main.paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+                else main.paintFlags and Paint.STRIKE_THRU_TEXT_FLAG.inv()
+                main.setTextColor(if (checked) Ui.MUTED else Ui.TEXT)
             }
-            insets
+            row.addView(box)
+            row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            c.addView(row)
         }
+        if (open.size > 8) c.addView(text("и ещё ${open.size - 8}…", 13f, Ui.MUTED).apply { setPadding(0, dp(6), 0, 0) })
+        homeworkBox.addCard(c, 8)
     }
 
-    private fun smallButton(label: String, onClick: () -> Unit) = Button(this).apply {
-        text = label
-        isAllCaps = false
-        textSize = 14f
-        setOnClickListener { onClick() }
-    }
-
-    private fun sectionTitle(label: String) = TextView(this).apply {
-        text = label
-        textSize = 17f
-        setTypeface(typeface, Typeface.BOLD)
-        setTextColor(Color.parseColor("#1F2A44"))
-        setPadding(0, dp(20), 0, dp(8))
-        gravity = Gravity.START
-    }
-
-    private fun matchWrap() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    companion object {
-        private const val REQ_START = 1
-        private const val REQ_RETRY = 2
-        private val BLUE = Color.parseColor("#2E5BBA")
-        private val RED = Color.parseColor("#C62828")
+    private fun renderSubjects() {
+        subjectsBox.removeAllViews()
+        val subjects = Subjects.list(this)
+        if (subjects.isEmpty()) {
+            val c = card()
+            c.addView(text("Добавь первый предмет", 16f, Ui.TEXT, bold = true))
+            c.addView(text("Например «Физика» или «Матан». Уроки будут складываться внутрь предмета и нумероваться.", 14f, Ui.MUTED).apply {
+                setPadding(0, dp(4), 0, dp(10))
+            })
+            c.addView(full(primaryButton("+ Добавить предмет") { addSubject(startAfter = false) }, 48))
+            subjectsBox.addCard(c, 8)
+            return
+        }
+        val lessons = LessonStore.lessons(this)
+        val homework = HomeworkStore.all(this)
+        for (s in subjects) {
+            val mine = lessons.filter { it.subject == s }
+            val openHw = homework.count { it.subject == s && !it.done }
+            val c = card().apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener {
+                    startActivity(Intent(this@MainActivity, SubjectActivity::class.java).putExtra(SubjectActivity.EXTRA_SUBJECT, s))
+                }
+            }
+            c.addView(subjectBadge(s))
+            val mid = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), 0, dp(8), 0)
+            }
+            mid.addView(text(s, 17f, Ui.TEXT, bold = true))
+            val sub = if (mine.isEmpty()) "Пока нет уроков" else
+                Ui.plural(mine.size, "урок", "урока", "уроков") + " · последний " + Ui.dateTime(mine.last().startedMs)
+            mid.addView(text(sub, 13f, Ui.MUTED))
+            c.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            val recordingThis = AppState.recording && AppState.lessonDir?.let { LessonStore.subject(it) } == s
+            val tail = when {
+                recordingThis -> pill("● запись", Ui.RED_BG, Ui.RED) {}
+                openHw > 0 -> pill("ДЗ $openHw", Ui.AMBER_BG, Ui.AMBER) {}
+                else -> text("›", 26f, Ui.MUTED)
+            }
+            tail.setOnClickListener(null)
+            tail.isClickable = false
+            c.addView(tail)
+            subjectsBox.addCard(c, 8)
+        }
     }
 }
