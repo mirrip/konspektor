@@ -13,13 +13,18 @@ android {
         applicationId = "app.konspektor"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4"
+        versionCode = 5
+        versionName = "0.5"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 shrinks Compose from ~14 MB to a few MB. Signed with the same (debug) key as the
+            // earlier builds, so it installs over them and keeps the key and recordings.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

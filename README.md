@@ -1,4 +1,4 @@
-# Конспектор
+﻿# Конспектор
 
 Android-приложение для себя: записывает урок с микрофона, режет на части по 5 минут
 (с перекрытием 3 секунды), отправляет каждую часть в Groq Whisper и складывает
@@ -88,7 +88,7 @@ gradlew.bat assembleDebug
 ```
 
 Нужен JDK 17+ (подходит встроенный в Android Studio: `C:\Program Files\Android\Android Studio\jbr`).
-Готовый APK: `app/build/outputs/apk/debug/app-debug.apk`.
+Готовый APK для телефона: `gradlew.bat assembleRelease` → `app/build/outputs/apk/release/app-release.apk` (сжат R8, подписан тем же ключом).
 
 Версии: Gradle 9.6.0, Android Gradle Plugin 9.5.1 (встроенный Kotlin), compileSdk 37,
 targetSdk 36, minSdk 26 (Android 8+). Сторонних библиотек нет.
