@@ -93,6 +93,20 @@ gradlew.bat assembleDebug
 Версии: Gradle 9.6.0, Android Gradle Plugin 9.5.1 (встроенный Kotlin), compileSdk 37,
 targetSdk 36, minSdk 26 (Android 8+). Сторонних библиотек нет.
 
+## Дизайн-стек
+
+| Что | Откуда | Где в проекте |
+|---|---|---|
+| Jetpack Compose + Material 3 (BOM 2026.09.00) | Google | `gradle/libs.versions.toml` |
+| Образцы дизайна и архитектуры | android/compose-samples, android/nowinandroid | `design-refs/` (не в git, `git clone --depth 1`) |
+| Матовое стекло | chrisbanes/haze 2.1.0 | зависимость |
+| Анимации | airbnb/lottie-android 6.7.1 | зависимость |
+| Палитра | material-foundation/material-color-utilities | `tools/palette` → `ui/theme/Color.kt` |
+| Шрифт Inter 4.1 | rsms/inter (OFL) | `res/font/`, лицензия в `third_party/inter` |
+| Иконки Material Symbols Rounded | google/material-design-icons (Apache-2.0) | `res/drawable/ms_*.xml` |
+
+Тема для Compose-экранов: `ui/theme/Theme.kt` (`KonspektorTheme`).
+
 ## Что дальше
 
 - Синхронизация папки `Konspektor` с компьютером.

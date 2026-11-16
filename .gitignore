@@ -7,3 +7,7 @@ local.properties
 *.iml
 captures/
 *.apk
+
+design-refs/
+tools/palette/node_modules/
+tools/palette/gen.bundle.mjs
