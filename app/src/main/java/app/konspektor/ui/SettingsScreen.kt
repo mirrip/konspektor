@@ -20,7 +20,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -121,6 +123,10 @@ fun SettingsScreen() {
             SettingsCard(R.drawable.ms_graphic_eq, "Расшифровка", Palette.subject("Физика")) {
                 KeyValue("Модель", prefs.model)
                 HorizontalDivider(Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                TranscribeHint(prefs)
+                HorizontalDivider(Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                HallucinationFilter(prefs)
+                HorizontalDivider(Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                 KeyValue("Части записи", "${LessonStore.CHUNK_SEC / 60} мин · перекрытие ${LessonStore.OVERLAP_SEC} с")
                 Note("Если связи нет, части ждут и отправляются позже. Аудио всегда остаётся на телефоне.")
                 OutlinedButton(
@@ -153,6 +159,49 @@ fun SettingsScreen() {
             )
         }
     }
+}
+
+/** Text sent to Whisper with every piece. Saved as you type; applies to pieces sent from now on. */
+@Composable
+private fun TranscribeHint(prefs: Prefs) {
+    var hint by remember { mutableStateOf(prefs.transcribeHint) }
+    Text("Подсказка для Whisper", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+    OutlinedTextField(
+        value = hint,
+        onValueChange = { v -> hint = v.take(Prefs.HINT_MAX); prefs.transcribeHint = hint },
+        placeholder = { Text("Например: термины и фамилии, которые часто звучат на уроках") },
+        minLines = 2, maxLines = 6,
+        supportingText = { Text("${hint.length} / ${Prefs.HINT_MAX}") },
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+    )
+    Note(
+        "Whisper не выполняет команды вроде «ничего не додумывай»: подсказку он читает как текст, сказанный " +
+            "перед записью, и подстраивает под неё стиль, пунктуацию и написание слов. Полезно перечислить " +
+            "термины, имена и фамилии с ваших уроков. Предмет, если он выбран, добавляется сам. " +
+            "От выдуманных фраз защищает фильтр ниже."
+    )
+    if (hint != Prefs.DEFAULT_HINT) {
+        TextButton(onClick = { hint = Prefs.DEFAULT_HINT; prefs.transcribeHint = hint }) { Text("Вернуть стандартную") }
+    }
+}
+
+@Composable
+private fun HallucinationFilter(prefs: Prefs) {
+    var on by remember { mutableStateOf(prefs.filterHallucinations) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "Убирать выдуманные фразы", style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f),
+        )
+        Switch(checked = on, onCheckedChange = { on = it; prefs.filterHallucinations = it })
+    }
+    Note(
+        "В тишине Whisper «слышит» титры с YouTube («Продолжение следует…», «Субтитры сделал DimaTorzok») " +
+            "и повторяет фразы. Фильтр вырезает такие куски до того, как текст попадёт в урок и к Codex: " +
+            "пару слов, растянутых на секунды тишины, известные титры, повторы и эхо подсказки. " +
+            "Вырезанное сохраняется рядом с аудио, число видно в уроке."
+    )
 }
 
 /** GitHub sync: token + repository, check, sync now, last result. */
@@ -195,9 +244,10 @@ private fun GitHubCard(prefs: Prefs) {
                 val r = repo.trim().trim('/')
                 checking = true
                 scope.launch {
+                    var branch = ""
                     val res = withContext(Dispatchers.IO) {
                         try {
-                            GitHubApi(token, r).checkRepo()
+                            branch = GitHubApi(token, r).checkRepo()
                             true to "Доступ к $r есть: чтение и запись"
                         } catch (e: GitHubApi.Failure) {
                             false to (e.message ?: "Ошибка")
@@ -206,7 +256,8 @@ private fun GitHubCard(prefs: Prefs) {
                     checking = false
                     checkResult = res
                     if (res.first) {
-                        prefs.githubToken = token; prefs.githubRepo = r
+                        if (r != prefs.githubRepo) prefs.resetSync() // another repository: sync from scratch
+                        prefs.githubToken = token; prefs.githubRepo = r; prefs.githubBranch = branch
                         saved = token; tokenInput = ""
                         SyncManager.requestSync(ctx)
                     }

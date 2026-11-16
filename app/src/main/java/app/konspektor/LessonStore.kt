@@ -169,6 +169,13 @@ object LessonStore {
     private fun partBase(chunk: File) = File(File(lessonOf(chunk), "parts"), chunk.nameWithoutExtension)
     fun textFile(chunk: File) = File(partBase(chunk).path + ".txt")
     fun failedFile(chunk: File) = File(partBase(chunk).path + ".failed")
+    /** Phrases [WhisperFilter] cut out of this piece, with time and reason. */
+    fun removedFile(chunk: File) = File(partBase(chunk).path + ".removed.txt")
+
+    /** Number of invented phrases cut out of the whole lesson. */
+    fun removedCount(lesson: File): Int =
+        File(lesson, "parts").listFiles { f -> f.name.endsWith(".removed.txt") }
+            ?.sumOf { f -> f.readLines().count { it.isNotBlank() } } ?: 0
 
     fun isPending(chunk: File) = !textFile(chunk).exists() && !failedFile(chunk).exists()
 

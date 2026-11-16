@@ -57,6 +57,7 @@ fun LessonScreen(path: String) {
     }
     val number = remember(sig) { LessonStore.number(ctx, dir) }
     val konspekt = remember(sig) { LessonStore.konspektText(dir) }
+    val removed = remember(sig) { LessonStore.removedCount(dir) }
     val transcript = if (AppState.lessonDir == dir && AppState.transcript.isNotEmpty()) AppState.transcript
     else remember(sig) { LessonStore.transcriptText(dir) }
     var tab by rememberSaveable { mutableStateOf(if (konspekt != null) 0 else 1) }
@@ -109,8 +110,8 @@ fun LessonScreen(path: String) {
                 if (tab == 0) {
                     if (konspekt != null) SelectionContainer { MarkdownText(konspekt) }
                     else Text(
-                        "Конспекта пока нет.\n\nCodex сделает его на компьютере после урока: разберёт текст, " +
-                            "определит предмет и тему и положит сюда конспект.",
+                        "Конспекта пока нет.\n\nОн появится здесь, когда Codex на компьютере разберёт уроки: " +
+                            "определит предмет и тему и напишет конспект.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -122,6 +123,11 @@ fun LessonScreen(path: String) {
                             color = if (body.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
                         )
                     }
+                    if (removed > 0) Text(
+                        "Фильтр вырезал выдуманные Whisper фразы: $removed. Что именно — в папке урока, parts/*.removed.txt.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 14.dp),
+                    )
                 }
             }
         }

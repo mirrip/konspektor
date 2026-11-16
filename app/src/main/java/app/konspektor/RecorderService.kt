@@ -341,8 +341,9 @@ class RecorderService : Service() {
             val key = prefs.groqKey
             try {
                 if (key.isBlank()) throw Transcriber.Failure("Не задан ключ Groq (настройки внизу экрана)", retryable = false)
-                val text = Transcriber.transcribe(chunk, key, prefs.model, previousText(chunk))
-                LessonStore.textFile(chunk).writeText(clean(text))
+                val prompt = promptFor(chunk)
+                val result = Transcriber.transcribe(chunk, key, prefs.model, prompt)
+                LessonStore.textFile(chunk).writeText(cleanResult(chunk, result, prompt))
                 if (isCurrent) AppState.done++
                 AppState.lastError = null
                 break
@@ -375,9 +376,34 @@ class RecorderService : Service() {
         val idx = chunk.nameWithoutExtension.removePrefix("chunk_").toIntOrNull() ?: return null
         if (idx <= 1) return null
         val prev = LessonStore.textFile(LessonStore.chunkFile(LessonStore.lessonOf(chunk), idx - 1))
-        return prev.takeIf { it.exists() }?.readText()?.takeLast(200)
+        return prev.takeIf { it.exists() }?.readText()?.takeLast(160)
     }
 
+    /** User's hint + the lesson's subject + end of the previous piece, within Groq's limit. */
+    private fun promptFor(chunk: File): String? {
+        val subject = LessonStore.subject(LessonStore.lessonOf(chunk)).takeIf { it != LessonStore.GENERAL }
+        return WhisperFilter.composePrompt(prefs.transcribeHint, subject, previousText(chunk))
+    }
+
+    /** Cuts out invented phrases; what was cut is kept next to the piece for checking. */
+    private fun cleanResult(chunk: File, result: Transcriber.Result, prompt: String?): String {
+        val removedFile = LessonStore.removedFile(chunk)
+        if (!prefs.filterHallucinations) {
+            removedFile.delete()
+            return result.text
+        }
+        if (result.segments.isEmpty()) return clean(result.text)
+        val cleaned = WhisperFilter.clean(result.segments, prompt)
+        if (cleaned.removed.isEmpty()) removedFile.delete()
+        else removedFile.writeText(cleaned.removed.joinToString("\n") { r ->
+            "[%s–%s] %s: %s".format(stamp(r.segment.start), stamp(r.segment.end), r.reason, r.segment.text.trim())
+        } + "\n")
+        return cleaned.text
+    }
+
+    private fun stamp(sec: Double) = "%d:%02d".format(sec.toInt() / 60, sec.toInt() % 60)
+
+    /** Fallback when Groq returns no segments: drop a short piece that is only a known credit line. */
     private fun clean(text: String): String {
         val t = text.trim()
         val low = t.lowercase()
