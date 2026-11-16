@@ -3,6 +3,16 @@ package app.konspektor
 import android.content.Context
 
 object Subjects {
+    /** The school subjects; Codex sorts lessons into exactly these (see AGENTS.md in konspektor-data). */
+    val KNOWN = listOf(
+        "Английский язык", "Русский язык", "Литературное чтение", "История", "Обществознание",
+        "Химия", "Биология", "География", "Информатика", "Алгебра", "Геометрия",
+        "Вероятность и статистика", "Физика",
+    )
+
+    /** For the manual subject picker: the known subjects plus any added by hand. */
+    fun choices(context: Context): List<String> = KNOWN + list(context).filter { it !in KNOWN }
+
     /**
      * Real subjects: ones the user added plus ones Codex assigned to lessons.
      * "Общий" is not a subject: those lessons wait for Codex to sort them.

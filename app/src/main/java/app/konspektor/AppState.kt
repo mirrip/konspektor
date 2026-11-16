@@ -18,6 +18,12 @@ object AppState {
     @Volatile var lastError: String? = null
     @Volatile var transcript: String = ""
 
+    // GitHub sync
+    @Volatile var syncing = false
+    @Volatile var syncMessage: String? = null   // last result or error, for the settings screen
+    @Volatile var syncError = false
+    @Volatile var syncVersion = 0              // bumped after every sync that changed local files
+
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
     private val main = Handler(Looper.getMainLooper())
 

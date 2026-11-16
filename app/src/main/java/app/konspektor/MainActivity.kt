@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         UiSignals.resumes.intValue++
+        SyncManager.requestSync(this)          // fetch new konspekts / homework from GitHub
     }
 
     override fun onNewIntent(intent: Intent) {

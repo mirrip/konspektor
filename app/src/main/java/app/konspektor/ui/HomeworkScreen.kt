@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -115,16 +116,15 @@ fun HomeworkScreen() {
     }
 
     if (newTask) TextInputDialog("Новое задание", "Например: №12 и 15 к пятнице", "Дальше", { newTask = false }) { task ->
-        if (Subjects.list(ctx).isEmpty()) { HomeworkStore.add(ctx, LessonStore.GENERAL, task); UiSignals.edited() }
-        else pickSubjectFor = task
+        pickSubjectFor = task
     }
     pickSubjectFor?.let { task ->
-        val subjects = Subjects.list(ctx)
+        val subjects = Subjects.choices(ctx)
         AlertDialog(
             onDismissRequest = { pickSubjectFor = null },
             title = { Text("По какому предмету?") },
             text = {
-                Column {
+                Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                     (subjects + LessonStore.GENERAL).forEach { s ->
                         ListItem(
                             headlineContent = { Text(if (s == LessonStore.GENERAL) "Без предмета" else s) },

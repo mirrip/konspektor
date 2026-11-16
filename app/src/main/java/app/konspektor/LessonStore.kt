@@ -83,9 +83,20 @@ object LessonStore {
         File(dir, "audio").mkdirs()
         File(dir, "parts").mkdirs()
         val started = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(now)
-        File(dir, "meta.txt").writeText("subject=$subj\nstarted=$started\nstarted_ms=${now.time}\n")
+        val id = "${dir.name}_${Prefs(context).deviceId}"
+        File(dir, "meta.txt").writeText("subject=$subj\nstarted=$started\nstarted_ms=${now.time}\nid=$id\n")
         return dir
     }
+
+    /** Id used in the GitHub repository; unique across phones. Older lessons get one on first use. */
+    fun lessonId(context: Context, dir: File): String {
+        readMeta(dir)["id"]?.let { return it }
+        val id = "${dir.name}_${Prefs(context).deviceId}"
+        File(dir, "meta.txt").appendText("id=$id\n")
+        return id
+    }
+
+    fun startedMs(dir: File): Long = readMeta(dir)["started_ms"]?.toLongOrNull() ?: dir.lastModified()
 
     fun lessonDirs(context: Context): List<File> =
         root(context).listFiles { f -> f.isDirectory && File(f, "meta.txt").exists() }?.sortedBy { it.name } ?: emptyList()

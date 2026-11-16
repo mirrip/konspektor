@@ -13,8 +13,8 @@ android {
         applicationId = "app.konspektor"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5"
+        versionCode = 6
+        versionName = "0.6"
     }
 
     buildTypes {
@@ -30,6 +30,15 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    testOptions {
+        unitTests.all { test ->
+            listOf("konspektor.tokenFile", "konspektor.repo").forEach { key ->
+                project.findProperty(key)?.let { test.systemProperty(key, it.toString()) }
+            }
+            test.testLogging { showStandardStreams = true }
+        }
     }
 
     compileOptions {
@@ -52,4 +61,8 @@ dependencies {
     // Frosted-glass blur (chrisbanes/haze) and animations (airbnb/lottie-android)
     implementation(libs.haze)
     implementation(libs.lottie.compose)
+
+    // GitHub client test against the real repository (skipped without a token file)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
 }

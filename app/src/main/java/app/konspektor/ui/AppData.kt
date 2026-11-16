@@ -39,7 +39,8 @@ fun rememberAppTick(): Int {
 /** Changes only when lessons, queue or files change — not on every mic level update. */
 fun dataSignature(): String =
     "${AppState.recording}|${AppState.serviceRunning}|${AppState.done}|${AppState.failed}|" +
-        "${AppState.queued}|${AppState.lessonDir}|${UiSignals.resumes.intValue}|${UiSignals.edits.intValue}"
+        "${AppState.queued}|${AppState.lessonDir}|${UiSignals.resumes.intValue}|${UiSignals.edits.intValue}|" +
+        "${AppState.syncVersion}"
 
 object Palette {
     val idleStart = Color(0xFF7C6CFF)

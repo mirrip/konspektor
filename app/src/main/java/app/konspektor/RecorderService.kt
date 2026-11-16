@@ -180,6 +180,7 @@ class RecorderService : Service() {
     private fun maybeStop() {
         if (AppState.recording || queue.isNotEmpty() || busy) return
         AppState.lessonDir?.let { LessonStore.finishIfComplete(it) }
+        SyncManager.requestSync(this)          // send finished lessons to GitHub
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         AppState.serviceRunning = false
@@ -366,7 +367,7 @@ class RecorderService : Service() {
         }
         val text = LessonStore.rebuildTranscript(lesson)
         if (isCurrent) AppState.transcript = text
-        LessonStore.finishIfComplete(lesson)
+        if (LessonStore.finishIfComplete(lesson)) SyncManager.requestSync(this)
         AppState.changed()
     }
 

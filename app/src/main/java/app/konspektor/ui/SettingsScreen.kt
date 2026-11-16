@@ -35,9 +35,16 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.rememberCoroutineScope
+import app.konspektor.AppState
+import app.konspektor.GitHubApi
 import app.konspektor.LessonStore
 import app.konspektor.Prefs
 import app.konspektor.R
+import app.konspektor.SyncManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsScreen() {
@@ -80,6 +87,8 @@ fun SettingsScreen() {
                 ) { Text("Сохранить ключ") }
             }
         }
+
+        item(key = "github") { GitHubCard(prefs) }
 
         item(key = "battery") {
             SettingsCard(R.drawable.ms_battery_charging_full, "Работа в фоне", if (ignoring) Palette.green else Palette.amber) {
@@ -142,6 +151,92 @@ fun SettingsScreen() {
                 modifier = Modifier.fillMaxWidth().padding(top = 28.dp),
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
+        }
+    }
+}
+
+/** GitHub sync: token + repository, check, sync now, last result. */
+@Composable
+private fun GitHubCard(prefs: Prefs) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    rememberAppTick()
+    var saved by remember { mutableStateOf(prefs.githubToken) }
+    var tokenInput by remember { mutableStateOf("") }
+    var repo by remember { mutableStateOf(prefs.githubRepo) }
+    var checking by remember { mutableStateOf(false) }
+    var checkResult by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+
+    SettingsCard(R.drawable.ms_folder, "Синхронизация с GitHub", Palette.subject("Информатика")) {
+        Text(
+            if (saved.isBlank()) "Не подключено" else "Подключено  ·  …${saved.takeLast(4)}",
+            style = MaterialTheme.typography.titleSmall, color = if (saved.isBlank()) Palette.amber else Palette.green,
+        )
+        Note(
+            "Тексты готовых уроков уходят в репозиторий, откуда их забирает Codex; конспекты, темы и домашка " +
+                "приходят обратно. Аудио остаётся на телефоне. Ключ — fine-grained токен только к этому репозиторию."
+        )
+        OutlinedTextField(
+            value = tokenInput, onValueChange = { tokenInput = it; checkResult = null },
+            placeholder = { Text(if (saved.isBlank()) "Ключ GitHub (github_pat_…)" else "Новый ключ (если нужно заменить)") },
+            singleLine = true, visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+        )
+        OutlinedTextField(
+            value = repo, onValueChange = { repo = it; checkResult = null },
+            label = { Text("Репозиторий (владелец/название)") }, singleLine = true,
+            shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        )
+        Button(
+            enabled = !checking && (tokenInput.isNotBlank() || saved.isNotBlank()) && repo.contains('/'),
+            onClick = {
+                val token = tokenInput.trim().ifEmpty { saved }
+                val r = repo.trim().trim('/')
+                checking = true
+                scope.launch {
+                    val res = withContext(Dispatchers.IO) {
+                        try {
+                            GitHubApi(token, r).checkRepo()
+                            true to "Доступ к $r есть: чтение и запись"
+                        } catch (e: GitHubApi.Failure) {
+                            false to (e.message ?: "Ошибка")
+                        }
+                    }
+                    checking = false
+                    checkResult = res
+                    if (res.first) {
+                        prefs.githubToken = token; prefs.githubRepo = r
+                        saved = token; tokenInput = ""
+                        SyncManager.requestSync(ctx)
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(48.dp),
+        ) { Text(if (checking) "Проверяю…" else "Проверить и сохранить") }
+        checkResult?.let { (ok, msg) ->
+            Text(msg, style = MaterialTheme.typography.bodySmall, color = if (ok) Palette.green else Palette.red, modifier = Modifier.padding(top = 8.dp))
+        }
+
+        if (saved.isNotBlank()) {
+            HorizontalDivider(Modifier.padding(vertical = 14.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            val last = prefs.lastSyncMs
+            KeyValue("Последняя синхронизация", if (last == 0L) "ещё не было" else Fmt.dateTime(last))
+            AppState.syncMessage?.let {
+                Text(
+                    (if (AppState.syncError) "⚠ " else "") + it, style = MaterialTheme.typography.bodySmall,
+                    color = if (AppState.syncError) Palette.red else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+            OutlinedButton(
+                enabled = !AppState.syncing,
+                onClick = { SyncManager.requestSync(ctx) },
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).height(48.dp),
+            ) {
+                Icon(painterResource(R.drawable.ms_refresh), null, modifier = Modifier.size(18.dp))
+                Text(if (AppState.syncing) "  Синхронизирую…" else "  Синхронизировать сейчас")
+            }
         }
     }
 }

@@ -236,7 +236,7 @@ fun HomeScreen() {
                 modifier = Modifier.padding(start = 24.dp, bottom = 8.dp),
             )
             val choose = { s: String -> prefs.currentSubject = s; current = s; chooser = false }
-            (listOf(LessonStore.GENERAL) + subjects).forEach { s ->
+            (listOf(LessonStore.GENERAL) + Subjects.choices(ctx)).forEach { s ->
                 ListItem(
                     headlineContent = { Text(s) },
                     leadingContent = { SubjectBadge(s, 36.dp) },
