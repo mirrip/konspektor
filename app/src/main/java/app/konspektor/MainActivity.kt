@@ -41,24 +41,40 @@ class MainActivity : BaseActivity() {
         takeKeyFromIntent(intent)
         val col = page("Конспектор", Ui.today(), back = false)
 
-        // --- record row: big square + two small squares
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        button = RecordButton(this).apply { setOnClickListener { onButton() } }
-        row.addView(button, LinearLayout.LayoutParams(0, dp(212), 1f))
-        val side = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(6), 0, dp(6))
+        // --- small controls above the big button: subject on the left, settings on the right
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        subjectSquare = smallSquare("•", "Общий") { chooseSubject() }
-        subjectIcon = subjectSquare.getChildAt(0) as TextView
-        subjectName = subjectSquare.getChildAt(1) as TextView
-        side.addView(subjectSquare, LinearLayout.LayoutParams(dp(84), 0, 1f))
-        side.addView(View(this), LinearLayout.LayoutParams(1, dp(12)))
-        side.addView(smallSquare("⚙", "Настройки") {
+        subjectSquare = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = pressable(Ui.SURFACE, 16)
+            setPadding(dp(12), 0, dp(16), 0)
+            setOnClickListener { chooseSubject() }
+        }
+        subjectIcon = text("✦", 16f, Ui.TEXT, Ui.BOLD).apply {
+            gravity = Gravity.CENTER
+            background = rounded(Ui.SURFACE2, 10)
+            layoutParams = LinearLayout.LayoutParams(dp(30), dp(30))
+        }
+        subjectName = text("Общий", 14.5f, Ui.TEXT, Ui.MEDIUM).apply {
+            setPadding(dp(10), 0, 0, 0)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        subjectSquare.addView(subjectIcon)
+        subjectSquare.addView(subjectName)
+        controls.addView(subjectSquare, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(52)))
+        controls.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        controls.addView(iconButton("⚙") {
             startActivity(Intent(this, SettingsActivity::class.java))
-        }, LinearLayout.LayoutParams(dp(84), 0, 1f))
-        row.addView(side, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(212)))
-        col.addView(full(row, null, 14))
+        }.apply { background = pressable(Ui.SURFACE, 16) }, LinearLayout.LayoutParams(dp(52), dp(52)))
+        col.addView(full(controls, null, 18))
+
+        // --- the big full-width on/off button
+        button = RecordButton(this).apply { setOnClickListener { onButton() } }
+        col.addView(full(button, 236, 12))
 
         statusText = text("", 13.5f, Ui.MUTED).apply { setPadding(dp(4), dp(12), dp(4), 0) }
         col.addView(full(statusText))
@@ -84,21 +100,6 @@ class MainActivity : BaseActivity() {
         subjectsCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(full(subjectsCol))
         col.addView(spacer(28))
-    }
-
-    private fun smallSquare(icon: String, name: String, onClick: () -> Unit) = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER
-        background = pressable(Ui.SURFACE, 22)
-        setPadding(dp(6), dp(6), dp(6), dp(6))
-        addView(text(icon, 22f, Ui.TEXT, Ui.BOLD).apply { gravity = Gravity.CENTER })
-        addView(text(name, 11.5f, Ui.MUTED, Ui.MEDIUM).apply {
-            gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, 0)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        })
-        setOnClickListener { onClick() }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -139,7 +140,7 @@ class MainActivity : BaseActivity() {
     private fun chooseSubject() {
         if (AppState.recording) { toast("Предмет меняется до начала записи"); return }
         val subjects = Subjects.list(this)
-        val items = listOf("Общий — Codex разберёт сам") + subjects + "+ Новый предмет"
+        val items = listOf("Общий") + subjects + "+ Новый предмет"
         dialog().setTitle("Предмет записи")
             .setItems(items.toTypedArray()) { _, which ->
                 when (which) {
@@ -156,24 +157,6 @@ class MainActivity : BaseActivity() {
             .show()
     }
 
-    private fun addHomework() {
-        askText("Новое задание", "Например: №12 и 15 к пятнице", "Дальше") { task ->
-            val subjects = Subjects.list(this)
-            if (subjects.isEmpty()) {
-                HomeworkStore.add(this, LessonStore.GENERAL, task)
-                listSignature = ""; renderLive()
-                return@askText
-            }
-            val items = subjects + "Без предмета"
-            dialog().setTitle("По какому предмету?")
-                .setItems(items.toTypedArray()) { _, which ->
-                    HomeworkStore.add(this, if (which < subjects.size) subjects[which] else LessonStore.GENERAL, task)
-                    listSignature = ""; renderLive()
-                }
-                .show()
-        }
-    }
-
     private fun openLesson(path: String) =
         startActivity(Intent(this, LessonActivity::class.java).putExtra(LessonActivity.EXTRA_DIR, path))
 
@@ -188,7 +171,7 @@ class MainActivity : BaseActivity() {
         val subject = if (rec) AppState.lessonDir?.let { LessonStore.subject(it) } ?: "" else prefs.currentSubject
         button.recording = rec
         button.level = AppState.level
-        button.subjectText = if (subject == LessonStore.GENERAL) "Общий · Codex разберёт" else subject
+        button.subjectText = if (subject == LessonStore.GENERAL) "" else subject
         if (rec) button.timerText = Ui.timer((System.currentTimeMillis() - AppState.startedAtMs) / 1000)
 
         val general = subject == LessonStore.GENERAL
@@ -235,21 +218,58 @@ class MainActivity : BaseActivity() {
         renderSubjects(lessons)
     }
 
+    /** Homework is its own section: one card here, the full list opens on tap. */
     private fun renderHomework() {
         val open = HomeworkStore.all(this).filter { !it.done }.sortedBy { it.createdMs }
         homeworkTitle.removeAllViews()
-        section(homeworkTitle, "Домашка", if (open.isEmpty()) null else "${open.size}", "+ Задание" to { addHomework() })
         homeworkCol.removeAllViews()
-        if (open.isEmpty()) {
-            homeworkCol.addView(full(emptyNote("Всё сделано ✓  Новые задания можно добавить кнопкой выше — позже их будет находить Codex."), null, 8))
-            return
+        val c = card(clickable = true).apply {
+            setOnClickListener { startActivity(Intent(this@MainActivity, HomeworkActivity::class.java)) }
         }
-        val c = card()
-        open.forEachIndexed { i, hw ->
-            if (i > 0) c.addView(divider())
-            c.addView(homeworkRow(hw) { listSignature = ""; renderLive() })
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-        homeworkCol.addCard(c, 8)
+        head.addView(text("✎", 18f, Ui.AMBER, Ui.BOLD).apply {
+            gravity = Gravity.CENTER
+            background = rounded(Ui.AMBER_SOFT, 14)
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+        })
+        val mid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), 0, dp(8), 0)
+        }
+        mid.addView(text("Домашка", 17f, Ui.TEXT, Ui.BOLD))
+        mid.addView(text(
+            if (open.isEmpty()) "Заданий нет" else Ui.plural(open.size, "задание", "задания", "заданий") + " не сделано",
+            13f, if (open.isEmpty()) Ui.MUTED else Ui.AMBER
+        ).apply { setPadding(0, dp(4), 0, 0) })
+        head.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(text("›", 24f, Ui.MUTED))
+        c.addView(head)
+        // short preview of the nearest tasks
+        open.take(2).forEach { hw ->
+            c.addView(divider())
+            c.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(View(this@MainActivity).apply {
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(Ui.subjectColor(hw.subject))
+                    }
+                    layoutParams = LinearLayout.LayoutParams(dp(8), dp(8))
+                })
+                addView(text(
+                    (if (hw.subject != LessonStore.GENERAL) hw.subject + ":  " else "") + hw.text, 14f, Ui.TEXT
+                ).apply {
+                    setPadding(dp(12), 0, 0, 0)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                })
+            })
+        }
+        homeworkCol.addCard(c, 26)
     }
 
     private fun renderSubjects(lessons: List<LessonInfo>) {

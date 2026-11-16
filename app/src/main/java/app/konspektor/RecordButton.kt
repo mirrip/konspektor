@@ -24,7 +24,7 @@ class RecordButton(context: Context) : View(context) {
         set(v) {
             if (field != v) history.fill(0f)
             field = v
-            contentDescription = if (v) "Остановить запись" else "Начать запись"
+            contentDescription = if (v) "Выключить запись" else "Включить запись"
             invalidate()
         }
     var level = 0f
@@ -49,7 +49,11 @@ class RecordButton(context: Context) : View(context) {
         textAlign = Paint.Align.CENTER
         typeface = Ui.MEDIUM
     }
-    private val mic = context.getDrawable(R.drawable.ic_mic)!!.mutate()
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
     private val rect = RectF()
     private val tmp = RectF()
     private val history = FloatArray(21)
@@ -60,7 +64,7 @@ class RecordButton(context: Context) : View(context) {
     init {
         isClickable = true
         isFocusable = true
-        contentDescription = "Начать запись"
+        contentDescription = "Включить запись"
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -103,19 +107,23 @@ class RecordButton(context: Context) : View(context) {
 
     private fun drawIdle(canvas: Canvas, cx: Float) {
         val h = rect.height()
-        val circleR = min(30 * d, h * 0.17f)
-        val cy = rect.top + h * 0.33f
+        val cy = rect.top + h * 0.40f
+        val ring = min(54 * d, h * 0.26f)
         soft.shader = null
-        soft.color = Color.argb(42, 255, 255, 255)
-        canvas.drawCircle(cx, cy, circleR, soft)
-        val s = (circleR * 1.05f).toInt()
-        mic.setBounds((cx - s / 2).toInt(), (cy - s / 2).toInt(), (cx + s / 2).toInt(), (cy + s / 2).toInt())
-        mic.draw(canvas)
+        soft.color = Color.argb(34, 255, 255, 255)
+        canvas.drawCircle(cx, cy, ring, soft)
+        drawPowerIcon(canvas, cx, cy, ring * 0.48f)
 
-        title.textSize = 21 * sd
-        canvas.drawText("Начать запись", cx, rect.top + h * 0.66f, title)
-        caption.textSize = 13 * sd
-        canvas.drawText(subjectText, cx, rect.top + h * 0.80f, caption)
+        title.textSize = 20 * sd
+        canvas.drawText("Включить", cx, rect.top + h * 0.82f, title)
+    }
+
+    /** The standard power symbol: an open ring with a bar through the gap. */
+    private fun drawPowerIcon(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+        stroke.strokeWidth = r * 0.24f
+        tmp.set(cx - r, cy - r, cx + r, cy + r)
+        canvas.drawArc(tmp, 300f, 300f, false, stroke)
+        canvas.drawLine(cx, cy - r * 1.18f, cx, cy - r * 0.18f, stroke)
     }
 
     private fun drawRecording(canvas: Canvas, cx: Float) {
@@ -133,7 +141,10 @@ class RecordButton(context: Context) : View(context) {
         bar.alpha = blink
         canvas.drawCircle(rect.left + 22 * d, rect.top + 22 * d, 4 * d, bar)
         bar.alpha = 255
-        canvas.drawText("ЗАПИСЬ · $subjectText", rect.left + 32 * d, rect.top + 26 * d, caption)
+        canvas.drawText(
+            if (subjectText.isEmpty()) "ЗАПИСЬ" else "ЗАПИСЬ · $subjectText",
+            rect.left + 32 * d, rect.top + 26 * d, caption
+        )
         caption.textAlign = Paint.Align.CENTER
 
         title.textSize = 40 * sd
@@ -156,8 +167,17 @@ class RecordButton(context: Context) : View(context) {
         }
         bar.alpha = 255
 
-        caption.textSize = 13 * sd
-        canvas.drawText("нажми, чтобы остановить", cx, rect.top + h * 0.88f, caption)
+        // small power icon + "Выключить"
+        val iconR = 8 * d
+        title.textSize = 16 * sd
+        val label = "Выключить"
+        val tw = title.measureText(label)
+        val y = rect.top + h * 0.88f
+        val startX = cx - (tw + iconR * 2 + 10 * d) / 2
+        drawPowerIcon(canvas, startX + iconR, y - 6 * d, iconR)
+        title.textAlign = Paint.Align.LEFT
+        canvas.drawText(label, startX + iconR * 2 + 10 * d, y, title)
+        title.textAlign = Paint.Align.CENTER
         postInvalidateOnAnimation()
     }
 }
